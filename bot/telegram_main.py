@@ -9,8 +9,8 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, Callb
 #  CONFIGURATION  (all values come from .env)
 # ──────────────────────────────────────────────
 TOKEN             = os.getenv("TELEGRAM_TOKEN")
-PROCESSOR_URL     = os.getenv("PROCESSOR_URL", "http://processor:10000/process")
-N8N_WEBHOOK_URL   = os.getenv("N8N_WEBHOOK_URL")   # internal: http://n8n:5678/webhook/render-receiver
+# This is now the URL that triggers your n8n workflow
+N8N_WEBHOOK_URL   = os.getenv("N8N_WEBHOOK_URL") 
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -77,8 +77,13 @@ def upload_keyboard():
 # ──────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    valid = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
+    
+    # 1. Silently ignore casual chat (no "http")
+    if not url.startswith("http"):
+        return 
 
+    # 2. If it is a link, validate it against allowed domains
+    valid = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
     if not any(v in url for v in valid):
         await update.message.reply_text(
             "❌ Send a valid Instagram Reel, YouTube Short, or TikTok link."
@@ -100,7 +105,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data  = query.data
 
-    # ── Campaign selected ──────────────────────
     if data.startswith("cam_"):
         campaign = data[4:]
         context.user_data["campaign"] = campaign
@@ -110,7 +114,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=position_keyboard()
         )
 
-    # ── Position selected ──────────────────────
     elif data.startswith("pos_"):
         position = data[4:]
         context.user_data["position"] = position
@@ -122,55 +125,43 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=upload_keyboard()
         )
 
-    # ── Upload target selected → fire and forget ──
     elif data.startswith("upload_"):
         target = data[7:]
         context.user_data["target"] = target
         await query.edit_message_text("⚙️ Sending to the factory…")
-        await send_to_processor(update, context)
+        await send_to_n8n(update, context)
 
 # ──────────────────────────────────────────────
-#  DISPATCH to processor
+#  DISPATCH to n8n Webhook
 # ──────────────────────────────────────────────
-async def send_to_processor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_to_n8n(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = update.callback_query.message
+    
     payload = {
-        "url":               context.user_data.get("url"),
-        "campaign":          context.user_data.get("campaign"),
-        "position":          context.user_data.get("position"),
-        "target":            context.user_data.get("target"),
-        "webhook_reply_url": N8N_WEBHOOK_URL,
+        "url":      context.user_data.get("url"),
+        "campaign": context.user_data.get("campaign"),
+        "position": context.user_data.get("position"),
+        "target":   context.user_data.get("target")
     }
 
-    log.info("Dispatching task: %s", payload)
+    log.info("Dispatching task to n8n: %s", payload)
 
     try:
+        # Pushing the request to n8n instead of the processor
         response = await asyncio.to_thread(
-            requests.post, PROCESSOR_URL, json=payload, timeout=30
+            requests.post, N8N_WEBHOOK_URL, json=payload, timeout=10
         )
         response.raise_for_status()
-        reply  = response.json()
-        q_pos  = reply.get("queue_position", 1)
-        camp   = payload["campaign"].upper()
+        
+        camp = payload["campaign"].upper()
+        await status_msg.edit_text(
+            f"✅ *Task Sent to Factory!*\nCampaign: `{camp}`\n\nYou'll get a Telegram message when it's done\.",
+            parse_mode="MarkdownV2"
+        )
 
-        if q_pos == 1:
-            await status_msg.edit_text(
-                f"✅ *Processing now\!*\nCampaign: `{camp}`\n\nYou'll get a Telegram message when it's uploaded\.",
-                parse_mode="MarkdownV2"
-            )
-        else:
-            await status_msg.edit_text(
-                f"✅ *Queued\!* You are \#{q_pos} in line\.\nCampaign: `{camp}`\n\nYou'll get a Telegram message when done\.",
-                parse_mode="MarkdownV2"
-            )
-
-    except requests.exceptions.ConnectionError:
-        await status_msg.edit_text("❌ Processor is unreachable. Check docker-compose logs.")
-    except requests.exceptions.Timeout:
-        await status_msg.edit_text("⚠️ Processor is busy — task may still be queued. Check back in a minute.")
     except Exception as e:
         log.error("Dispatch error: %s", e)
-        await status_msg.edit_text(f"❌ Error: {str(e)}")
+        await status_msg.edit_text(f"❌ Error reaching n8n: {str(e)}")
 
 # ──────────────────────────────────────────────
 #  MAIN
