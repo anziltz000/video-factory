@@ -11,26 +11,17 @@ import yt_dlp
 
 app = Flask(__name__)
 
-# ──────────────────────────────────────────────
-#  PATHS
-# ──────────────────────────────────────────────
 WORKSPACE_DIR  = "/tmp/workspace"
 ASSETS_DIR     = "/app/assets/campaign-logos"
-
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
-# ──────────────────────────────────────────────
-#  CAMPAIGN CONFIG
-# ──────────────────────────────────────────────
 CAMPAIGN_CONFIG = {
     "leonbet": {"file": "LEONBET-LOGO.mp4",  "type": "video", "chroma": "0x0000FF"},
     "bitz":    {"file": "Bitz.io-LOGO.mp4",  "type": "video", "chroma": "0x00FF00"},
     "acebet":  {"file": "ACEBET-LOGO.mp4",   "type": "video", "chroma": "0x0000FF"},
     "rajbet":  {"file": "RajBet-LOGO.mp4",   "type": "video", "chroma": "0x0000FF"},
 }
-
 LOGO_WIDTH = 550
-
 POS_MAP = {
     "top":    ("(main_w-overlay_w)/2", "80"),
     "bottom": ("(main_w-overlay_w)/2", "main_h-overlay_h-80"),
@@ -38,19 +29,12 @@ POS_MAP = {
     "c2":     ("main_w-overlay_w-40",  "main_h-overlay_h-80"),
 }
 
-# ──────────────────────────────────────────────
-#  HELPERS
-# ──────────────────────────────────────────────
 def asset_path(campaign_key: str) -> str:
     cfg  = CAMPAIGN_CONFIG[campaign_key]
     path = os.path.join(ASSETS_DIR, cfg["file"])
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Logo not found: {path}")
+    if not os.path.exists(path): raise FileNotFoundError(f"Logo not found: {path}")
     return path
 
-# ──────────────────────────────────────────────
-#  CORE PROCESSING FUNCTION
-# ──────────────────────────────────────────────
 def process_task(video_url, campaign_key, position_key, target_key, reply_webhook_url):
     ts         = int(time.time())
     input_path = os.path.join(WORKSPACE_DIR, f"raw_{ts}.mp4")
@@ -58,21 +42,18 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
     caption    = "No caption found"
 
     try:
-        # ── Step 1: Download ───────────────────
         print(f"📥 [1/3] Downloading: {video_url}", flush=True)
         ydl_opts = {
-            "outtmpl":              input_path,
-            "format":               "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "merge_output_format":  "mp4",
-            "quiet":                True,
-            "no_warnings":          True,
+            "outtmpl": input_path,
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "merge_output_format": "mp4",
+            "quiet": True, "no_warnings": True,
             "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info    = ydl.extract_info(video_url, download=True)
             caption = info.get("description") or info.get("title") or "No caption"
 
-        # ── Step 2: FFmpeg processing ──────────
         print(f"⚙️  [2/3] Rendering | campaign={campaign_key} | position={position_key}", flush=True)
         probe     = ffmpeg.probe(input_path)
         has_audio = any(s["codec_type"] == "audio" for s in probe["streams"])
@@ -95,14 +76,7 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
         x_val, y_val = POS_MAP.get(position_key, POS_MAP["bottom"])
         composited   = base.overlay(overlay, x=x_val, y=y_val, shortest=1)
 
-        encode_kwargs = {
-            "vcodec":   "libx264",
-            "pix_fmt":  "yuv420p",
-            "crf":      "18",
-            "preset":   "medium",
-            "threads":  "4",
-            "movflags": "+faststart",
-        }
+        encode_kwargs = {"vcodec": "libx264", "pix_fmt": "yuv420p", "crf": "18", "preset": "medium", "threads": "4", "movflags": "+faststart"}
 
         if has_audio:
             audio = ffmpeg.input(input_path).audio
@@ -113,12 +87,13 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
         print("🎬  Encoding…", flush=True)
         ffmpeg.run(out, overwrite_output=True, capture_stdout=True, capture_stderr=True)
 
-        # ── Step 3: Send to n8n ───────────────
+        # ── Step 3: Send to n8n (Multipart Form Data) ──
         print(f"🚀 [3/3] Sending to n8n webhook: {reply_webhook_url}", flush=True)
-        file_size = os.path.getsize(output_path)
-        print(f"    Output size: {file_size / 1_000_000:.1f} MB", flush=True)
-
+        
         with open(output_path, "rb") as f:
+            # When we use 'files=' and 'data=' together, requests automatically 
+            # formats it as multipart/form-data. n8n will read 'data' as the body, 
+            # and 'files' as the binary attachment.
             response = requests.post(
                 reply_webhook_url,
                 files={"file": (os.path.basename(output_path), f, "video/mp4")},
@@ -139,13 +114,10 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
 
     finally:
         for path in (input_path, output_path):
-            if os.path.exists(path):
-                os.remove(path)
+            if os.path.exists(path): os.remove(path)
         print("🧹 Cleaned up temp files.", flush=True)
 
-# ──────────────────────────────────────────────
-#  QUEUE + WORKER & HTTP API
-# ──────────────────────────────────────────────
+# ── QUEUE + WORKER & HTTP API ──
 task_queue: queue.Queue = queue.Queue()
 
 def _worker():
@@ -165,7 +137,6 @@ def health():
 def enqueue():
     data = request.get_json(force=True, silent=True) or {}
     
-    # Required keys
     video_url         = data.get("url")
     reply_webhook_url = data.get("webhook_reply_url")
     
