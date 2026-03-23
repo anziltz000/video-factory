@@ -1,0 +1,6 @@
+flask==3.0.3
+requests==2.31.0
+ffmpeg-python==0.2.0
+yt-dlp==2024.4.9
+opencv-python-headless==4.9.0.80
+numpy==1.26.4

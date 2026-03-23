@@ -1,0 +1,68 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────
+#  VideoFactory  —  docker-compose.yml
+#  Services:  bot | processor | n8n
+#  All on one Oracle Cloud VM, talking on an internal network.
+# ─────────────────────────────────────────────────────────────────
+
+networks:
+  factory:
+    driver: bridge
+
+volumes:
+  n8n_data:      # n8n workflow database, credentials, etc.
+
+services:
+
+  # ── 1. Telegram Bot ────────────────────────────────────────────
+  bot:
+    build: ./bot
+    container_name: vf-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PROCESSOR_URL=http://processor:10000/process
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+    depends_on:
+      - processor
+    networks:
+      - factory
+
+  # ── 2. Video Processor ─────────────────────────────────────────
+  processor:
+    build: ./processor
+    container_name: vf-processor
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./assets:/app/assets:ro    # logo files live here (read-only)
+    ports:
+      - "10000:10000"              # expose if you ever want to call it directly
+    networks:
+      - factory
+    # Give it more shared memory for FFmpeg/OpenCV
+    shm_size: "512m"
+
+  # ── 3. n8n Automation ─────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: vf-n8n
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - N8N_HOST=${N8N_HOST}          # your Oracle VM public IP or domain
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://${N8N_HOST}:5678/
+      - GENERIC_TIMEZONE=Asia/Kolkata
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+    networks:
+      - factory
