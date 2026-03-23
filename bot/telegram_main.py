@@ -8,9 +8,9 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, Callb
 # ──────────────────────────────────────────────
 #  CONFIGURATION  (all values come from .env)
 # ──────────────────────────────────────────────
-TOKEN             = os.getenv("TELEGRAM_TOKEN")
-# This is now the URL that triggers your n8n workflow
-N8N_WEBHOOK_URL   = os.getenv("N8N_WEBHOOK_URL") 
+TOKEN           = os.getenv("TELEGRAM_TOKEN")
+# This is the URL that triggers your FIRST n8n workflow
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL") 
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -19,7 +19,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
-#  CAMPAIGN INFO TEXT
+#  CAMPAIGN INFO TEXT (Cleaned up for Standard Markdown)
 # ──────────────────────────────────────────────
 CAMPAIGN_INFO_TEXT = """
 💰 *ACTIVE CAMPAIGNS* 💰
@@ -31,11 +31,11 @@ CAMPAIGN_INFO_TEXT = """
 *[$20] Bitz.io* — YT & Insta
   • Any English content · 20 sec
   • Max 100 submits per social
-  ⚠️ Must tag @bitzcasino on Insta\!
+  ⚠️ Must tag @bitzcasino on Insta!
 
 *[$80] AceBet* — YT Only
   • 1K+ subs · Tier 1 streamer clips only
-  • \(Kai Cenat, Speed, Jynxzi, FaZe etc\.\)
+  • (Kai Cenat, Speed, Jynxzi, FaZe etc.)
   • Max 25 submits per social
 
 *[$80] RajBet* — YT Only
@@ -76,24 +76,26 @@ def upload_keyboard():
 #  STEP 1 — User sends a video link
 # ──────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
+    text = update.message.text.strip()
+    text_lower = text.lower()
     
-    # 1. Silently ignore casual chat (no "http")
-    if not url.startswith("http"):
+    # 1. Is it a link at all? If not, silently ignore it.
+    if "http" not in text_lower and "www." not in text_lower:
         return 
 
-    # 2. If it is a link, validate it against allowed domains
+    # 2. It IS a link. Is it an allowed platform?
     valid = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com")
-    if not any(v in url for v in valid):
+    if not any(v in text_lower for v in valid):
         await update.message.reply_text(
             "❌ Send a valid Instagram Reel, YouTube Short, or TikTok link."
         )
         return
 
-    context.user_data["url"] = url
+    # 3. Valid link received. Show menu.
+    context.user_data["url"] = text # Save original exact text
     await update.message.reply_text(
         CAMPAIGN_INFO_TEXT,
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
         reply_markup=campaign_keyboard()
     )
 
@@ -147,7 +149,6 @@ async def send_to_n8n(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info("Dispatching task to n8n: %s", payload)
 
     try:
-        # Pushing the request to n8n instead of the processor
         response = await asyncio.to_thread(
             requests.post, N8N_WEBHOOK_URL, json=payload, timeout=10
         )
@@ -155,8 +156,8 @@ async def send_to_n8n(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         camp = payload["campaign"].upper()
         await status_msg.edit_text(
-            f"✅ *Task Sent to Factory!*\nCampaign: `{camp}`\n\nYou'll get a Telegram message when it's done\.",
-            parse_mode="MarkdownV2"
+            f"✅ *Task Sent to Factory!*\nCampaign: `{camp}`\n\nYou'll get a Telegram message when it's done.",
+            parse_mode="Markdown"
         )
 
     except Exception as e:
