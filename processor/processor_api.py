@@ -22,11 +22,12 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 # ──────────────────────────────────────────────
 #  CAMPAIGN CONFIG
 # ──────────────────────────────────────────────
+# Added yellow (0xFFFF00) and light blue/cyan (0x00FFFF) hex codes
 CAMPAIGN_CONFIG = {
-    "leonbet": {"file": "LEONBET-LOGO.mp4",  "type": "video", "chroma": "0x0000FF"},
-    "bitz":    {"file": "Bitz.io-LOGO.mp4",  "type": "video", "chroma": "0x00FF00"},
-    "acebet":  {"file": "ACEBET-LOGO.mp4",   "type": "video", "chroma": "0x0000FF"},
-    "rajbet":  {"file": "RajBet-LOGO.mp4",   "type": "video", "chroma": "0x0000FF"},
+    "jb_sports": {"file": "JACKBIT - LOGO.mp4", "type": "video", "chroma": "0x00FFFF"}, # Light blue
+    "jb_gen":    {"file": "JACKBIT - LOGO.mp4", "type": "video", "chroma": "0x00FFFF"}, # Light blue
+    "lucky":     {"file": "LUCKY.FUN.mp4",      "type": "video", "chroma": "0xFFFF00"}, # Yellow
+    "bitz":      {"file": "Bitz.io-LOGO.mp4",   "type": "video", "chroma": "0x00FF00"}, # Green
 }
 
 LOGO_WIDTH = 550
@@ -58,7 +59,7 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
     caption    = "No caption found"
 
     try:
-        # ── Step 1: Download with Cookies ───────────────
+        # ── Step 1: Download with Cookies + Proxies ───────────────
         print(f"📥 [1/3] Downloading: {video_url}", flush=True)
         ydl_opts = {
             "outtmpl":              input_path,
@@ -93,7 +94,7 @@ def process_task(video_url, campaign_key, position_key, target_key, reply_webhoo
             .filter("setsar", 1)
         )
 
-        cfg       = CAMPAIGN_CONFIG[campaign_key]
+        cfg       = CAMPAIGN_CONFIG.get(campaign_key, CAMPAIGN_CONFIG["bitz"])
         logo_file = asset_path(campaign_key)
         overlay   = (
             ffmpeg.input(logo_file, stream_loop=-1)
@@ -182,7 +183,7 @@ def enqueue():
 
     task_queue.put({
         "url":               video_url,
-        "campaign":          data.get("campaign", "leonbet").lower(),
+        "campaign":          data.get("campaign", "bitz").lower(),
         "position":          data.get("position", "bottom").lower(),
         "target":            data.get("target", "both").lower(),
         "webhook_reply_url": reply_webhook_url,
