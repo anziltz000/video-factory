@@ -3,15 +3,13 @@ import logging
 import requests
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters
 
 # ──────────────────────────────────────────────
 #  CONFIGURATION
 # ──────────────────────────────────────────────
 TOKEN           = os.getenv("TELEGRAM_TOKEN")
-# Send jobs to the local Docker processor container
 PROCESSOR_URL   = os.getenv("PROCESSOR_URL", "http://processor:10000/process")
-# The final destination the processor will send the video to
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL") 
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
@@ -20,23 +18,22 @@ log = logging.getLogger(__name__)
 CAMPAIGN_INFO_TEXT = """
 💰 *ACTIVE CAMPAIGNS* 💰
 
-*[$20] LeonBET* — YT Only
-  • 1K+ subs required · Any English content · 15 sec
-  • Max 25 submits per social
+*[$50] JACKBIT SPORTS*
+  • YT & INSTA · 1K+ subs
+  • Any sports video · Max 30 submits/social
 
-*[$20] Bitz.io* — YT & Insta
-  • Any English content · 20 sec
-  • Max 100 submits per social
+*[$20] JACKBIT GENERAL*
+  • YT & INSTA · 1K+ subs
+  • Any English video · Max 30 submits/social
+
+*[$20] LUCKY.FUN GENERAL*
+  • YT & INSTA · 1K+ subs
+  • Any English video · Max 25 submits/social
+
+*[$20] BITZ.IO GENERAL*
+  • YT & INSTA · 100+ subs
+  • Any Eng/Ger video · Max 100 submits/social
   ⚠️ Must tag @bitzcasino on Insta!
-
-*[$80] AceBet* — YT Only
-  • 1K+ subs · Tier 1 streamer clips only
-  • (Kai Cenat, Speed, Jynxzi, FaZe etc.)
-  • Max 25 submits per social
-
-*[$80] RajBet* — YT Only
-  • 1K+ subs · Any English content
-  • Max 25 submits per social
 
 ─────────────────────────
 👇 *SELECT CAMPAIGN BELOW* 👇
@@ -44,10 +41,10 @@ CAMPAIGN_INFO_TEXT = """
 
 def campaign_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🦁 LeonBET ($20)",  callback_data="cam_leonbet"),
-         InlineKeyboardButton("🎰 Bitz.io ($20)",  callback_data="cam_bitz")],
-        [InlineKeyboardButton("🔥 AceBet ($80)",   callback_data="cam_acebet"),
-         InlineKeyboardButton("💎 RajBet ($80)",   callback_data="cam_rajbet")],
+        [InlineKeyboardButton("⚽ JACKBIT SPORTS ($50)", callback_data="cam_jb_sports")],
+        [InlineKeyboardButton("🎲 JACKBIT GEN ($20)", callback_data="cam_jb_gen"),
+         InlineKeyboardButton("🍀 LUCKY.FUN ($20)", callback_data="cam_lucky")],
+        [InlineKeyboardButton("🎰 BITZ.IO ($20)", callback_data="cam_bitz")],
     ])
 
 def position_keyboard():
@@ -64,6 +61,10 @@ def upload_keyboard():
          InlineKeyboardButton("📺 YouTube Only",   callback_data="upload_yt")],
         [InlineKeyboardButton("🚀 Upload BOTH",    callback_data="upload_both")],
     ])
+
+# ── NEW: /start Command ──
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Bot is ALIVE and running!\n\nSend me a valid Instagram Reel, YouTube Short, or TikTok link to begin processing.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -92,8 +93,17 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("cam_"):
         campaign = data[4:]
         context.user_data["campaign"] = campaign
+        
+        # Make the campaign name look pretty in the confirmation msg
+        camp_names = {
+            "jb_sports": "JACKBIT SPORTS",
+            "jb_gen": "JACKBIT GENERAL",
+            "lucky": "LUCKY.FUN",
+            "bitz": "BITZ.IO"
+        }
+        
         await query.edit_message_text(
-            f"✅ Campaign: *{campaign.upper()}*\n\nStep 2 — Pick logo position:",
+            f"✅ Campaign: *{camp_names.get(campaign, campaign.upper())}*\n\nStep 2 — Pick logo position:",
             parse_mode="Markdown",
             reply_markup=position_keyboard()
         )
@@ -114,17 +124,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚙️ Sending to the Video Processor…")
         await send_to_processor(update, context)
 
-# ── Send to PROCESSOR, not directly to n8n ──
 async def send_to_processor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = update.callback_query.message
     
-    # We send the job to the local processor container
     payload = {
         "url":               context.user_data.get("url"),
         "campaign":          context.user_data.get("campaign"),
         "position":          context.user_data.get("position"),
         "target":            context.user_data.get("target"),
-        "webhook_reply_url": N8N_WEBHOOK_URL # Tell processor where to send the final video
+        "webhook_reply_url": N8N_WEBHOOK_URL
     }
 
     log.info("Dispatching task to processor: %s", payload)
@@ -154,6 +162,10 @@ if __name__ == "__main__":
 
     log.info("🤖 Bot starting…")
     app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Add handlers
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_buttons))
+    
     app.run_polling(drop_pending_updates=True)
